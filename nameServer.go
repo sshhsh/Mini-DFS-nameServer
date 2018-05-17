@@ -5,6 +5,8 @@ import (
 	"log"
 	"strings"
 	"fmt"
+	"os"
+	"io"
 )
 
 var dataServer [4]string
@@ -18,10 +20,31 @@ const RECOVERING int = 7
 func upload(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	//TODO
+
+	w.Header().Add("Access-Control-Allow-Origin", "*")
+
+	if r.Method == "POST" {
+		/*var buff [2048*1024]byte
+		r.Body.Read(buff)*/
+		fmt.Println(r.Header.Get("Content-Type"))
+		file, handle, err := r.FormFile("file")
+		if err != nil {
+			fmt.Println(err)
+		}
+		f, err := os.OpenFile("./test/"+handle.Filename, os.O_WRONLY|os.O_CREATE, 0666)
+		io.Copy(f, file)
+		if err != nil {
+			fmt.Println(err)
+		}
+		defer f.Close()
+		defer file.Close()
+		fmt.Println("upload success")
+	}
 }
 
 func download(w http.ResponseWriter, r *http.Request) {
 	//TODO
+
 }
 
 func register(w http.ResponseWriter, r *http.Request) {
@@ -86,5 +109,6 @@ func main() {
 	http.HandleFunc("/download", download)
 	http.HandleFunc("/register", register)
 	http.HandleFunc("/status", status)
+	fmt.Println("Name server is running.")
 	log.Fatal(http.ListenAndServe(":8081", nil))
 }
