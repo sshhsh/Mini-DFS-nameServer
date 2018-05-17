@@ -5,8 +5,9 @@ import (
 	"log"
 	"strings"
 	"fmt"
-	"os"
+	"bufio"
 	"io"
+	"math/rand"
 )
 
 var dataServer [4]string
@@ -16,6 +17,7 @@ const RUNNING int = 1
 const NONE int = 0
 const ERROR int = 4
 const RECOVERING int = 7
+const BUFFLENGTH int = 2048 * 1024
 
 func upload(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
@@ -24,22 +26,54 @@ func upload(w http.ResponseWriter, r *http.Request) {
 	w.Header().Add("Access-Control-Allow-Origin", "*")
 
 	if r.Method == "POST" {
-		/*var buff [2048*1024]byte
-		r.Body.Read(buff)*/
 		fmt.Println(r.Header.Get("Content-Type"))
+
 		file, handle, err := r.FormFile("file")
 		if err != nil {
 			fmt.Println(err)
 		}
-		f, err := os.OpenFile("./test/"+handle.Filename, os.O_WRONLY|os.O_CREATE, 0666)
-		io.Copy(f, file)
-		if err != nil {
-			fmt.Println(err)
+
+		chunkNum := int(handle.Size / int64(BUFFLENGTH))
+		if handle.Size%int64(BUFFLENGTH) > 0 {
+			chunkNum ++
 		}
-		defer f.Close()
+
+		reader := bufio.NewReader(file)
+
+		i := 0
+		offset := rand.Intn(4)
+		var buff = make([]byte, BUFFLENGTH)
+		for {
+			n, err := reader.Read(buff)
+
+			index := (i + offset) % 4
+
+			for i := 0; i < 4; i++ {
+				if i != index {
+					var data = make([]byte, n)
+					copy(data, buff)
+					go send(data, dataServer[i])
+				}
+			}
+
+			i++
+			if err != nil && err != io.EOF {
+				panic(err)
+			}
+			if n == 0 {
+				break
+			}
+		}
+		fmt.Printf("chunks: %d real: %d", chunkNum, i)
+
+
 		defer file.Close()
 		fmt.Println("upload success")
 	}
+}
+
+func send(data []byte, target string) {
+
 }
 
 func download(w http.ResponseWriter, r *http.Request) {
