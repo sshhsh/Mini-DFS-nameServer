@@ -8,6 +8,8 @@ import (
 	"bufio"
 	"io"
 	"math/rand"
+	"bytes"
+	"io/ioutil"
 )
 
 var dataServer [4]string
@@ -18,18 +20,6 @@ const NONE int = 0
 const ERROR int = 4
 const RECOVERING int = 7
 const BUFFLENGTH int = 2048 * 1024
-
-type Chunk struct {
-}
-
-type MyFile struct {
-	isFile    bool
-	path      string
-	basename  string
-	extension string
-	filename  string
-	files     []MyFile
-}
 
 func upload(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
@@ -50,6 +40,9 @@ func upload(w http.ResponseWriter, r *http.Request) {
 			chunkNum ++
 		}
 
+		newPath := r.PostFormValue("path")
+		newMyFile := newFile(newPath, handle.Filename, true, chunkNum)
+
 		reader := bufio.NewReader(file)
 
 		i := 0
@@ -60,11 +53,15 @@ func upload(w http.ResponseWriter, r *http.Request) {
 
 			index := (i + offset) % 4
 
-			for i := 0; i < 4; i++ {
-				if i != index {
+			//split to chunks
+			newMyChunk := newChunk(index)
+			newMyFile.chunks[i] = newMyChunk
+
+			for j := 0; j < 4; j++ {
+				if j != index {
 					var data = make([]byte, n)
 					copy(data, buff)
-					go send(data, dataServer[i])
+					go send(data, dataServer[j], newMyChunk.id.String())
 				}
 			}
 
@@ -78,14 +75,23 @@ func upload(w http.ResponseWriter, r *http.Request) {
 		}
 		fmt.Printf("chunks: %d real: %d", chunkNum, i)
 
-
 		defer file.Close()
 		fmt.Println("upload success")
 	}
 }
 
-func send(data []byte, target string) {
-
+func send(data []byte, target string, id string) {
+	resp, err := http.Post("http://"+target+":8080", "", bytes.NewReader(data))
+	if err != nil {
+		fmt.Println(err)
+	}
+	defer resp.Body.Close()
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		// handle error
+	}
+	//TODO
+	fmt.Println(string(body))
 }
 
 func download(w http.ResponseWriter, r *http.Request) {
@@ -151,6 +157,8 @@ func cheackStatus() bool {
 }
 
 func main() {
+	root = newFile("", "", false, 0)
+
 	http.HandleFunc("/upload", upload)
 	http.HandleFunc("/download", download)
 	http.HandleFunc("/register", register)
