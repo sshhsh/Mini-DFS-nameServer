@@ -19,6 +19,18 @@ const ERROR int = 4
 const RECOVERING int = 7
 const BUFFLENGTH int = 2048 * 1024
 
+type Chunk struct {
+}
+
+type MyFile struct {
+	isFile    bool
+	path      string
+	basename  string
+	extension string
+	filename  string
+	files     []MyFile
+}
+
 func upload(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	//TODO
