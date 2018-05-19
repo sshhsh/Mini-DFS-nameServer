@@ -27,6 +27,7 @@ const BUFFLENGTH int = 2048 * 1024
 
 func upload(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
+	w.Header().Add("Access-Control-Allow-Origin", "*")
 
 	//check status
 	currentStatus = cheackStatus()
@@ -35,8 +36,6 @@ func upload(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(500)
 		return
 	}
-
-	w.Header().Add("Access-Control-Allow-Origin", "*")
 
 	if r.Method == "POST" {
 		fmt.Println(r.Header.Get("Content-Type"))
@@ -48,6 +47,14 @@ func upload(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer file.Close()
+
+		currentPath := r.PostFormValue("path")
+		fmt.Printf("Saving %s into %s", handle.Filename, currentPath)
+		if exists(currentPath, handle.Filename) {
+			fmt.Println("file exists")
+			w.WriteHeader(500)
+			return
+		}
 
 		chunkNum := int(handle.Size / int64(BUFFLENGTH))
 		if handle.Size%int64(BUFFLENGTH) > 0 {
@@ -102,8 +109,12 @@ func upload(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		currentPath := r.PostFormValue("path")
-		newMyFile := newFile(currentPath, handle.Filename, true, chunkNum)
+		newMyFile, err := newFile(currentPath, handle.Filename, true, chunkNum)
+		if err != nil {
+			fmt.Println(err)
+			w.WriteHeader(500)
+			return
+		}
 		newMyFile.chunks = newChunks
 
 		fmt.Printf("chunks: %d real: %d", chunkNum, i)
@@ -217,7 +228,12 @@ func cheackStatus() bool {
 }
 
 func main() {
-	root = newFile("", "", false, 0)
+	var err error
+	root, err = newFile("", "", false, 0)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
 
 	http.HandleFunc("/upload", upload)
 	http.HandleFunc("/download", download)

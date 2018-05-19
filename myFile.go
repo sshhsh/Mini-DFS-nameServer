@@ -3,6 +3,8 @@ package main
 import (
 	"github.com/google/uuid"
 	"strings"
+	"errors"
+	"fmt"
 )
 
 type Chunk struct {
@@ -35,13 +37,24 @@ func newChunk(index int) *Chunk {
 	return tmp
 }
 
-func newFile(path string, name string, isFile bool, chunkNum int) *MyFile {
+func exists(path string, name string) bool {
+	currentPath := getFileFromPath(path)
+	for _, previousFile := range currentPath.files {
+		if name == previousFile.basename {
+			return true
+		}
+	}
+	return false
+}
+
+func newFile(path string, name string, isFile bool, chunkNum int) (*MyFile, error) {
 	tmp := new(MyFile)
 
+	//for creating root
 	if path == "" && name == "" {
 		tmp.files = make([]*MyFile, 1)
 		tmp.files[0] = tmp
-		return tmp
+		return tmp, nil
 	}
 
 	tmp.id = uuid.New()
@@ -51,6 +64,14 @@ func newFile(path string, name string, isFile bool, chunkNum int) *MyFile {
 
 	//add to path
 	currentPath := getFileFromPath(path)
+
+	//check for same file
+	for _, previousFile := range currentPath.files {
+		if name == previousFile.basename {
+			return nil, errors.New("file existed")
+		}
+	}
+
 	currentPath.files = append(currentPath.files, tmp)
 
 	if isFile {
@@ -69,7 +90,7 @@ func newFile(path string, name string, isFile bool, chunkNum int) *MyFile {
 		tmp.files[0] = tmp
 	}
 
-	return tmp
+	return tmp, nil
 }
 
 func getFileFromPath(path string) *MyFile {
@@ -97,17 +118,19 @@ func getFileFromPath(path string) *MyFile {
 	return nil
 }
 
-/*func main() {
-	root = newFile("", "", false, 0)
+func main() {
+	root, _ = newFile("", "", false, 0)
 
-	a:=newFile("", "a", false, 0)
-	b:=newFile("", "b", true, 4)
+	a, _ := newFile("", "a", false, 0)
+	_, err := newFile("", "a", true, 4)
+
 	g:=getFileFromPath("a")
-	c:= newFile("a", "c", false, 0)
-	d:=newFile("a/c", "d", false, 0)
-	e:=newFile("a/c", "e.233", true, 44)
-	fmt.Println(a.id,b.id,c.id,d.id,e.id)
+	c, _ := newFile("a", "c", false, 0)
+	d, _ := newFile("a/c", "d", false, 0)
+	e, _ := newFile("a/c", "e.233", true, 44)
+	fmt.Println(a.id, err, c.id, d.id, e.id)
 	f:=getFileFromPath("a/c/e.233")
+	h := exists("a/c", "e.233")
 
-	fmt.Println(f.id,g.id)
-}*/
+	fmt.Println(f.id, g.id, h)
+}
