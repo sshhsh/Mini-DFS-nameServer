@@ -12,6 +12,7 @@ import (
 	"io/ioutil"
 	"crypto/md5"
 	"encoding/hex"
+	"sync"
 )
 
 var dataServer [4]string
@@ -35,7 +36,6 @@ func upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-
 	w.Header().Add("Access-Control-Allow-Origin", "*")
 
 	if r.Method == "POST" {
@@ -44,7 +44,10 @@ func upload(w http.ResponseWriter, r *http.Request) {
 		file, handle, err := r.FormFile("file")
 		if err != nil {
 			fmt.Println(err)
+			w.WriteHeader(500)
+			return
 		}
+		defer file.Close()
 
 		chunkNum := int(handle.Size / int64(BUFFLENGTH))
 		if handle.Size%int64(BUFFLENGTH) > 0 {
@@ -58,11 +61,14 @@ func upload(w http.ResponseWriter, r *http.Request) {
 		i := 0
 		offset := rand.Intn(4)
 		var buff = make([]byte, BUFFLENGTH)
+		var waitgroup = new(sync.WaitGroup) //go routine number
 		for {
 			n, err := reader.Read(buff)
 
 			if err != nil && err != io.EOF {
 				panic(err)
+				w.WriteHeader(500)
+				return
 			}
 			if n == 0 {
 				break
@@ -81,11 +87,19 @@ func upload(w http.ResponseWriter, r *http.Request) {
 					md5Ctx := md5.New()
 					md5Ctx.Write(data)
 					md5Result := md5Ctx.Sum(nil)
-					go send(data, j, newMyChunk.id.String(), hex.EncodeToString(md5Result))
+					waitgroup.Add(1)
+					go send(data, j, newMyChunk.id.String(), hex.EncodeToString(md5Result), waitgroup)
 				}
 			}
 
 			i++
+		}
+
+		waitgroup.Wait()
+		if !cheackStatus() {
+			fmt.Println("Maybe the last package went wrong")
+			w.WriteHeader(500)
+			return
 		}
 
 		currentPath := r.PostFormValue("path")
@@ -94,12 +108,13 @@ func upload(w http.ResponseWriter, r *http.Request) {
 
 		fmt.Printf("chunks: %d real: %d", chunkNum, i)
 
-		defer file.Close()
+
 		fmt.Println("upload success")
 	}
 }
 
-func send(data []byte, target int, id string, md5 string) {
+func send(data []byte, target int, id string, md5 string, waitgroup *sync.WaitGroup) {
+	defer waitgroup.Done()
 	if !currentStatus {
 		fmt.Printf("Something goes wrong when sending to %s.\n", dataServer[target])
 		return
