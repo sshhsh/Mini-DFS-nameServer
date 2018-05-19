@@ -10,10 +10,13 @@ import (
 	"math/rand"
 	"bytes"
 	"io/ioutil"
+	"crypto/md5"
+	"encoding/hex"
 )
 
 var dataServer [4]string
 var dataServerStatus [4]int
+var currentStatus bool
 
 const RUNNING int = 1
 const NONE int = 0
@@ -23,7 +26,15 @@ const BUFFLENGTH int = 2048 * 1024
 
 func upload(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
-	//TODO
+
+	//check status
+	currentStatus = cheackStatus()
+	if !currentStatus {
+		fmt.Println("Name Server is not ready")
+		w.WriteHeader(500)
+		return
+	}
+
 
 	w.Header().Add("Access-Control-Allow-Origin", "*")
 
@@ -40,8 +51,7 @@ func upload(w http.ResponseWriter, r *http.Request) {
 			chunkNum ++
 		}
 
-		newPath := r.PostFormValue("path")
-		newMyFile := newFile(newPath, handle.Filename, true, chunkNum)
+		newChunks := make([]*Chunk, chunkNum)
 
 		reader := bufio.NewReader(file)
 
@@ -51,28 +61,37 @@ func upload(w http.ResponseWriter, r *http.Request) {
 		for {
 			n, err := reader.Read(buff)
 
-			index := (i + offset) % 4
-
-			//split to chunks
-			newMyChunk := newChunk(index)
-			newMyFile.chunks[i] = newMyChunk
-
-			for j := 0; j < 4; j++ {
-				if j != index {
-					var data = make([]byte, n)
-					copy(data, buff)
-					go send(data, dataServer[j], newMyChunk.id.String())
-				}
-			}
-
-			i++
 			if err != nil && err != io.EOF {
 				panic(err)
 			}
 			if n == 0 {
 				break
 			}
+
+			index := (i + offset) % 4
+
+			//split to chunks
+			newMyChunk := newChunk(index)
+			newChunks[i] = newMyChunk
+
+			for j := 0; j < 4; j++ {
+				if j != index {
+					var data = make([]byte, n)
+					copy(data, buff)
+					md5Ctx := md5.New()
+					md5Ctx.Write(data)
+					md5Result := md5Ctx.Sum(nil)
+					go send(data, j, newMyChunk.id.String(), hex.EncodeToString(md5Result))
+				}
+			}
+
+			i++
 		}
+
+		currentPath := r.PostFormValue("path")
+		newMyFile := newFile(currentPath, handle.Filename, true, chunkNum)
+		newMyFile.chunks = newChunks
+
 		fmt.Printf("chunks: %d real: %d", chunkNum, i)
 
 		defer file.Close()
@@ -80,18 +99,44 @@ func upload(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func send(data []byte, target string, id string) {
-	resp, err := http.Post("http://"+target+":8080", "", bytes.NewReader(data))
+func send(data []byte, target int, id string, md5 string) {
+	if !currentStatus {
+		fmt.Printf("Something goes wrong when sending to %s.\n", dataServer[target])
+		return
+	}
+
+	body := bytes.NewReader(data)
+	request, err := http.NewRequest("POST", "http://"+dataServer[target]+":8080/upload", body)
 	if err != nil {
-		fmt.Println(err)
+		log.Println("http.NewRequest,[err=%s][url=%s]", err, dataServer[target])
+		currentStatus = false
+		dataServerStatus[target] = ERROR
+		return
+	}
+	request.Header.Set("Connection", "Keep-Alive")
+	request.Header.Set("filename", id)
+	var resp *http.Response
+	resp, err = http.DefaultClient.Do(request)
+	if err != nil {
+		log.Println("http.Do failed,[err=%s][url=%s]", err, dataServer[target])
+		currentStatus = false
+		dataServerStatus[target] = ERROR
+		return
 	}
 	defer resp.Body.Close()
-	body, err := ioutil.ReadAll(resp.Body)
+	b, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		// handle error
+		log.Println("http.Do failed,[err=%s][url=%s]", err, dataServer[target])
 	}
-	//TODO
-	fmt.Println(string(body))
+
+	if md5 != string(b) {
+		fmt.Printf("MD5 checking failed")
+		currentStatus = false
+		dataServerStatus[target] = ERROR
+		return
+	}
+
+	fmt.Printf("Writing to %s successful, MD5=%s\n", dataServer[target], md5)
 }
 
 func download(w http.ResponseWriter, r *http.Request) {

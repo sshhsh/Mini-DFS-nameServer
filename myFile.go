@@ -18,19 +18,19 @@ type MyFile struct {
 	extension string
 	filename  string
 	files     []*MyFile
-	chunks    []Chunk
+	chunks    []*Chunk
 }
 
 var root *MyFile
 
-func newChunk(index int) Chunk {
-	tmp := Chunk{}
+func newChunk(index int) *Chunk {
+	tmp := new(Chunk)
 	tmp.id = uuid.New()
-	for i, j := 0, 0; i < 4; i++ {
+	for i, j := 0, 0; i < 4 && j < 3; i++ {
 		if i != index {
-			tmp.server[j] = i;
+			tmp.server[j] = i
+			j++
 		}
-		j++
 	}
 	return tmp
 }
@@ -54,7 +54,7 @@ func newFile(path string, name string, isFile bool, chunkNum int) *MyFile {
 	currentPath.files = append(currentPath.files, tmp)
 
 	if isFile {
-		tmp.chunks = make([]Chunk, chunkNum)
+		//tmp.chunks = make([]Chunk, chunkNum)
 
 		index := strings.LastIndex(name, ".")
 		if index != -1 {
