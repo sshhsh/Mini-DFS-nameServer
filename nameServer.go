@@ -19,18 +19,18 @@ var dataServer [4]string
 var dataServerStatus [4]int
 var currentStatus bool
 
-const RUNNING int = 1
-const NONE int = 0
-const ERROR int = 4
-const RECOVERING int = 7
-const BUFFLENGTH int = 2048 * 1024
+const RUNNING = 1
+const NONE = 0
+const ERROR = 4
+const RECOVERING = 7
+const BUFFLENGTH = 2048 * 1024
 
 func upload(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	w.Header().Add("Access-Control-Allow-Origin", "*")
 
 	//check status
-	currentStatus = cheackStatus()
+	currentStatus = checkStatus()
 	if !currentStatus {
 		fmt.Println("Name Server is not ready")
 		w.WriteHeader(500)
@@ -103,13 +103,13 @@ func upload(w http.ResponseWriter, r *http.Request) {
 		}
 
 		waitgroup.Wait()
-		if !cheackStatus() {
+		if !checkStatus() {
 			fmt.Println("Maybe the last package went wrong")
 			w.WriteHeader(500)
 			return
 		}
 
-		newMyFile, err := newFile(currentPath, handle.Filename, true, chunkNum)
+		newMyFile, err := newFile(currentPath, handle.Filename, true)
 		if err != nil {
 			fmt.Println(err)
 			w.WriteHeader(500)
@@ -119,14 +119,15 @@ func upload(w http.ResponseWriter, r *http.Request) {
 
 		fmt.Printf("chunks: %d real: %d", chunkNum, i)
 
-
 		fmt.Println("upload success")
 	}
 }
 
 func send(data []byte, target int, id string, md5 string, waitgroup *sync.WaitGroup) {
-	defer waitgroup.Done()
-	if !currentStatus {
+	if waitgroup != nil {
+		defer waitgroup.Done()
+	}
+	if !currentStatus && dataServerStatus[target] != RECOVERING {
 		fmt.Printf("Something goes wrong when sending to %s.\n", dataServer[target])
 		return
 	}
@@ -134,7 +135,7 @@ func send(data []byte, target int, id string, md5 string, waitgroup *sync.WaitGr
 	body := bytes.NewReader(data)
 	request, err := http.NewRequest("POST", "http://"+dataServer[target]+":8080/upload", body)
 	if err != nil {
-		log.Println("http.NewRequest,[err=%s][url=%s]", err, dataServer[target])
+		log.Printf("http.NewRequest,[err=%s][url=%s]", err, dataServer[target])
 		currentStatus = false
 		dataServerStatus[target] = ERROR
 		return
@@ -144,7 +145,7 @@ func send(data []byte, target int, id string, md5 string, waitgroup *sync.WaitGr
 	var resp *http.Response
 	resp, err = http.DefaultClient.Do(request)
 	if err != nil {
-		log.Println("http.Do failed,[err=%s][url=%s]", err, dataServer[target])
+		log.Printf("http.Do failed,[err=%s][url=%s]", err, dataServer[target])
 		currentStatus = false
 		dataServerStatus[target] = ERROR
 		return
@@ -152,7 +153,7 @@ func send(data []byte, target int, id string, md5 string, waitgroup *sync.WaitGr
 	defer resp.Body.Close()
 	b, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		log.Println("http.Do failed,[err=%s][url=%s]", err, dataServer[target])
+		log.Printf("http.Do failed,[err=%s][url=%s]", err, dataServer[target])
 	}
 
 	if md5 != string(b) {
@@ -166,8 +167,64 @@ func send(data []byte, target int, id string, md5 string, waitgroup *sync.WaitGr
 }
 
 func download(w http.ResponseWriter, r *http.Request) {
-	//TODO
+	w.Header().Add("Access-Control-Allow-Origin", "*")
 
+	//check status
+	currentStatus = checkStatus()
+	if !currentStatus {
+		fmt.Println("Name Server is not ready")
+		w.WriteHeader(500)
+		return
+	}
+
+	path := r.FormValue("path")
+	host := r.RemoteAddr
+	fmt.Printf("Sending %s to %s.\n", path, host)
+	file := getFileFromPath(path)
+	if file == nil || !file.isFile {
+		fmt.Println("File don't exists")
+		w.WriteHeader(500)
+		return
+	}
+
+	w.Header().Add("Content-Type", "application/octet-stream")
+	w.Header().Add("content-disposition", "attachment; filename=\""+file.basename+"\"")
+
+	for i, chunk := range file.chunks {
+		res := receive(chunk.server[i%3], chunk.id.String())
+		if res == nil {
+			fmt.Printf("Receiving from %d failed.", chunk.server[i%3])
+			dataServerStatus[chunk.server[i%3]] = ERROR
+			w.WriteHeader(500)
+			return
+		}
+		w.Write(res)
+	}
+}
+
+func receive(target int, id string) []byte {
+	request, err := http.NewRequest("GET", "http://"+dataServer[target]+":8080/download", nil)
+	if err != nil {
+		log.Printf("http.NewRequest,[err=%s][url=%s]", err, dataServer[target])
+		currentStatus = false
+		dataServerStatus[target] = ERROR
+		return nil
+	}
+	request.Header.Set("filename", id)
+	var resp *http.Response
+	resp, err = http.DefaultClient.Do(request)
+	if err != nil {
+		log.Printf("http.Do failed,[err=%s][url=%s]", err, dataServer[target])
+		currentStatus = false
+		dataServerStatus[target] = ERROR
+		return nil
+	}
+	defer resp.Body.Close()
+	b, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		log.Printf("http.Do failed,[err=%s][url=%s]", err, dataServer[target])
+	}
+	return b
 }
 
 func register(w http.ResponseWriter, r *http.Request) {
@@ -185,11 +242,9 @@ func register(w http.ResponseWriter, r *http.Request) {
 		}
 		if dataServerStatus[i] == ERROR {
 			dataServer[i] = remoteIP
-			//TODO recovery
-
 			dataServerStatus[i] = RECOVERING
+			go recovery(i)
 			w.Write([]byte("Success"))
-			fmt.Printf("%s recovered with Place %d successfully!\n", remoteIP, i)
 			break
 		}
 		if dataServer[i] == remoteIP {
@@ -201,7 +256,61 @@ func register(w http.ResponseWriter, r *http.Request) {
 
 }
 
+func recovery(target int) {
+	resp, err := http.Get("http://" + dataServer[target] + ":8080/echo")
+	if err != nil {
+		go recovery(target)
+		return
+	}
+	resp.Body.Close()
+	fmt.Printf("%s echo success\n", dataServer[target])
+	queue := make([]*MyFile, 0)
+	queue = append(queue, root) //push
+	for {
+		if len(queue) == 0 { //is empty
+			break
+		}
+		currentDir := queue[0] //top
+		for _, dir := range currentDir.files {
+			if dir == currentDir {
+				continue
+			}
+			if !dir.isFile {
+				queue = append(queue, dir)
+			} else {
+				for _, ch := range dir.chunks {
+					for _, server := range ch.server {
+						if server == target {
+							for _, server2 := range ch.server {
+								if dataServerStatus[server2] == RUNNING {
+									recoveryTo(server2, server, ch.id.String())
+									break
+								}
+							}
+							break
+						}
+					}
+				}
+			}
+		}
+		queue = queue[1:] //pop
+	}
+
+	fmt.Printf("%s recovered with Place %d successfully!\n", dataServer[target], target)
+	dataServerStatus[target] = RUNNING
+}
+
+func recoveryTo(from int, to int, id string) {
+	fmt.Printf("%s send to %s\n", dataServer[from], dataServer[to])
+	tmp := receive(from, id)
+	md5Ctx := md5.New()
+	md5Ctx.Write(tmp)
+	md5Result := md5Ctx.Sum(nil)
+	send(tmp, to, id, hex.EncodeToString(md5Result), nil)
+}
+
 func status(w http.ResponseWriter, _ *http.Request) {
+	currentStatus = checkStatus()
 	for i := 0; i < 4; i++ {
 		switch dataServerStatus[i] {
 		case RUNNING:
@@ -218,22 +327,23 @@ func status(w http.ResponseWriter, _ *http.Request) {
 	}
 }
 
-func cheackStatus() bool {
+func checkStatus() bool {
+	tmp := true
 	for i := 0; i < 4; i++ {
-		if dataServerStatus[i] != RUNNING {
-			return false
+		resp, err := http.Get("http://" + dataServer[i] + ":8080/echo")
+		if err != nil {
+			tmp = false
+			dataServerStatus[i] = ERROR
+		} else {
+			resp.Body.Close()
+			dataServerStatus[i] = RUNNING
 		}
 	}
-	return true
+	return tmp
 }
 
 func main() {
-	var err error
-	root, err = newFile("", "", false, 0)
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
+	root, _ = newFile("", "", false)
 
 	http.HandleFunc("/upload", upload)
 	http.HandleFunc("/download", download)

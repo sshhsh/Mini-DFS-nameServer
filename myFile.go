@@ -4,7 +4,6 @@ import (
 	"github.com/google/uuid"
 	"strings"
 	"errors"
-	"fmt"
 )
 
 type Chunk struct {
@@ -47,7 +46,7 @@ func exists(path string, name string) bool {
 	return false
 }
 
-func newFile(path string, name string, isFile bool, chunkNum int) (*MyFile, error) {
+func newFile(path string, name string, isFile bool) (*MyFile, error) {
 	tmp := new(MyFile)
 
 	//for creating root
@@ -118,7 +117,7 @@ func getFileFromPath(path string) *MyFile {
 	return nil
 }
 
-func main() {
+/*func main() {
 	root, _ = newFile("", "", false, 0)
 
 	a, _ := newFile("", "a", false, 0)
@@ -133,4 +132,4 @@ func main() {
 	h := exists("a/c", "e.233")
 
 	fmt.Println(f.id, g.id, h)
-}
+}*/
