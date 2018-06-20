@@ -13,6 +13,7 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"sync"
+	"encoding/json"
 )
 
 var dataServer [4]string
@@ -121,6 +122,24 @@ func upload(w http.ResponseWriter, r *http.Request) {
 
 		fmt.Println("upload success")
 	}
+}
+
+func newFolder(w http.ResponseWriter, r *http.Request) {
+	w.Header().Add("Access-Control-Allow-Origin", "*")
+	currentPath := r.FormValue("path")
+	newDir := r.FormValue("newPath")
+	if newDir == "" {
+		fmt.Println("no folder name")
+		w.WriteHeader(500)
+		return
+	}
+	_, err := newFile(currentPath, newDir, false)
+	if err != nil {
+		fmt.Println(err)
+		w.WriteHeader(500)
+		return
+	}
+	fmt.Println("create new folder success")
 }
 
 func send(data []byte, target int, id string, md5 string, waitgroup *sync.WaitGroup) {
@@ -342,13 +361,59 @@ func checkStatus() bool {
 	return tmp
 }
 
+func list(w http.ResponseWriter, r *http.Request) {
+	w.Header().Add("Access-Control-Allow-Origin", "*")
+	path := r.FormValue("path")
+	dir := getFileFromPath(path)
+	if dir == nil {
+		fmt.Println("No such directory.")
+		w.WriteHeader(500)
+		return
+	}
+	if dir.isFile {
+		fmt.Println("Not a directory.")
+		w.WriteHeader(500)
+		return
+	}
+	s := make([]map[string]string, len(dir.files)-1)
+	for i, f := range dir.files {
+		if i == 0 {
+			continue
+		}
+		s[i-1] = make(map[string]string)
+		if f.isFile {
+			s[i-1]["type"] = "file"
+		} else {
+			s[i-1]["type"] = "dir"
+		}
+		if path == "" {
+			s[i-1]["path"] = f.basename
+		} else {
+			s[i-1]["path"] = f.path + "/" + f.basename
+		}
+
+		s[i-1]["basename"] = f.basename
+		s[i-1]["extension"] = f.extension
+		s[i-1]["filename"] = f.filename
+	}
+	b, err := json.Marshal(s)
+	if err != nil {
+		fmt.Println("error:", err)
+	}
+	w.Write(b)
+}
+
 func main() {
 	root, _ = newFile("", "", false)
-
+	_, _ = newFile("", "someDir", false)
+	_, _ = newFile("", "otherDir", false)
+	_, _ = newFile("otherDir", "anotherDir", false)
 	http.HandleFunc("/upload", upload)
 	http.HandleFunc("/download", download)
 	http.HandleFunc("/register", register)
 	http.HandleFunc("/status", status)
+	http.HandleFunc("/list", list)
+	http.HandleFunc("/newFolder", newFolder)
 	fmt.Println("Name server is running.")
 	log.Fatal(http.ListenAndServe(":8081", nil))
 }
