@@ -329,8 +329,10 @@ func recoveryTo(from int, to int, id string) {
 }
 
 func status(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Add("Access-Control-Allow-Origin", "*")
 	currentStatus = checkStatus()
 	for i := 0; i < 4; i++ {
+		w.Write([]byte(dataServer[i] + " "))
 		switch dataServerStatus[i] {
 		case RUNNING:
 			w.Write([]byte("RUNNING"))
@@ -341,7 +343,7 @@ func status(w http.ResponseWriter, _ *http.Request) {
 		case NONE:
 			w.Write([]byte("NONE"))
 		}
-		w.Write([]byte(dataServer[i]))
+
 		w.Write([]byte("\n"))
 	}
 }
